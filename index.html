@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>olc::BeatTheBoredom</title>
+</head>
+<body>
+
+	<script type="text/javascript" src="./framework.js"></script>
+	<script type="text/javascript">
+		let t = 0.0;
+
+		new Fw(800, 600, 2).run({
+			onLoad: function(fw) {
+				let content = fw.content;
+				content.addImage("char", "character.png");
+				content.addImage("blocks", "blocks.png");
+			},
+			onUpdate: function(fw, dt) {
+				let s = 1.0;
+				if (fw.isMouseDown(0)) s = 10.0;
+				t += dt * s;
+			},
+			onDraw: function(fw) {
+				let content = fw.content.assets;
+				let ctx = fw.context;
+				let ren = fw.renderer;
+
+				ren.clear();
+
+				let mp = Math.isometricFromScreen(fw.mouse[0], fw.mouse[1]);
+				mp[0] = ~~Math.round(mp[0] / 32.0) * 32.0;
+				mp[1] = ~~Math.round(mp[1] / 32.0) * 32.0;
+				let mps = Math.isometricToScreen(mp[0], mp[1], 0.0);
+
+				ren.tile(content["blocks"], mps[0], mps[1], 0.5, 0.5, 10, 16, 8);
+				// for (let y = 0; y < 10; y++) {
+				// 	for (let x = 0; x < 10; x++) {
+				// 		let pos = Math.isometricToScreen(x * 32, y * 32, Math.sin(x + t) * 32.0);
+				// 		ren.tile(content["blocks"], pos[0], pos[1], 0.5, 0.5, 10, 16, 8);
+				// 	}
+				// }
+				ren.flush("none", false);
+			}
+		});
+	</script>
+</body>
+</html>
