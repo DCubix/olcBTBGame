@@ -33,12 +33,16 @@ class Renderer {
 		this.commands = new Array();
 		this.cameraX = 0;
 		this.cameraY = 0;
+		this.applyCamera = true;
 
 		this.context.imageSmoothingEnabled = false;
 		this.backContext.imageSmoothingEnabled = false;
 	}
 
 	get camera() {
+		if (!this.applyCamera) {
+			return [0, 0];
+		}
 		let cx = this.cameraX - ~~(this.width / 2);
 		let cy = this.cameraY - ~~(this.height / 2);
 		return [cx, cy];
@@ -50,6 +54,8 @@ class Renderer {
 	}
 
 	raw(image, x, y, ox, oy, sx, sy, sw, sh, color) {
+		let cam = this.camera;
+
 		ox = ox || 0.0;
 		oy = oy || 0.0;
 		sx = sx || 0;
@@ -63,8 +69,8 @@ class Renderer {
 
 		this.commands.push({
 			image: image,
-			x: ix,
-			y: iy,
+			x: ix - cam[0],
+			y: iy - cam[1],
 			source: [sx, sy, sw, sh],
 			color: color
 		});
@@ -93,10 +99,9 @@ class Renderer {
 	 * @param {string} sorting 
 	 * @param {RenderingContext} context
 	 */
-	flush(sorting, applyCamera) {
+	flush(sorting) {
 		let context = this.backContext;
 
-		applyCamera = applyCamera || true;
 		sorting = sorting || "none";
 		sorting = sorting.toLowerCase();
 
@@ -113,8 +118,8 @@ class Renderer {
 		// Cull things out
 		let culledCommands = [];
 		for (let cmd of this.commands) {
-			let x = applyCamera ? cmd.x - cam[0] : cmd.x,
-				y = applyCamera ? cmd.y - cam[1] : cmd.y,
+			let x = cmd.x,
+				y = cmd.y,
 				w = cmd.source[2],
 				h = cmd.source[3];
 			if (x + w >= 0 &&
@@ -129,8 +134,8 @@ class Renderer {
 		context.save();
 		for (let cmd of culledCommands) {
 			context.globalAlpha = cmd.color[3];
-			let x = applyCamera ? cmd.x - cam[0] : cmd.x,
-				y = applyCamera ? cmd.y - cam[1] : cmd.y;
+			let x = cmd.x,
+				y = cmd.y;
 			context.drawImage(cmd.image, cmd.source[0], cmd.source[1], cmd.source[2], cmd.source[3], ~~x, ~~y, cmd.source[2], cmd.source[3]);
 		}
 		context.restore();
@@ -178,8 +183,145 @@ class ContentHandler {
 	}
 }
 
+class Entity {
+	constructor() {
+		this.x = 0;
+		this.y = 0;
+		this.tag = "";
+		this.life = -1;
+		this.dead = false;
+		this.__created = false;
+	}
+
+	onCreate(framework) {}
+	onUpdate(framework, dt) {}
+	onDraw(framework) {}
+	onDestroy(framework) {}
+
+	destroy(timeout) {
+		timeout = timeout || timeout + 0.0001;
+		this.life = timeout;
+	}
+
+	update(framework, dt) {
+		if (!this.__created) {
+			this.onCreate(framework);
+			this.__created = true;
+		}
+		this.onUpdate(framework, dt);
+
+		if (this.life >= 0.0) {
+			this.life -= dt;
+			if (this.life <= 0.0) {
+				this.life = 0.0;
+				this.dead = true;
+				this.onDestroy(framework);
+			}
+		}
+	}
+}
+
+class EntityHandler {
+	constructor() {
+		this.entities = [];
+	}
+
+	add(entity) {
+		entity.__created = false;
+		entity.life = -1;
+		entity.dead = false;
+		this.entities.push(entity);
+	}
+
+	destroyAll(tag, timeout) {
+		for (let ent of this.entities) {
+			if (ent.tag === tag) ent.destroy(timeout);
+		}
+	}
+
+	update(framework, dt) {
+		let dead = [];
+		let i = 0;
+		for (let ent of this.entities) {
+			ent.update(framework, dt);
+			if (ent.dead) dead.push(i);
+			i++
+		}
+		dead = dead.sort().reverse();
+		for (let d of dead) {
+			this.entities.splice(d, 1);
+		}
+	}
+
+	render(framework, tag) {
+		for (let ent of this.entities) {
+			if (tag && ent.tag !== tag) continue;
+			if (!ent.__created) continue;
+			ent.onDraw(framework);
+		}
+	}
+}
+
+class Timer {
+	constructor(speed) {
+		this.speed = speed || 0.1;
+		this.frame = 0;
+		this.time = 0.0;
+	}
+
+	tick(dt) {
+		let frame = this.frame;
+		this.time += dt;
+		if (this.time >= this.speed) {
+			this.time = 0;
+			this.frame++;
+		}
+		return frame;
+	}
+
+	get normalized() {
+		return this.time / this.speed;
+	}
+}
+
+class Game {
+	/**
+	 * 
+	 * @param {ContentHandler} content 
+	 */
+	onLoad(content) {}
+
+	/**
+	 * 
+	 * @param {Fw} framework 
+	 */
+	onStart(framework) {}
+	
+	/**
+	 * 
+	 * @param {Fw} framework 
+	 * @param {number} dt 
+	 */
+	onUpdate(framework, dt) {}
+
+	/**
+	 * 
+	 * @param {Fw} framework 
+	 */
+	onDraw(framework) {}
+}
+
 class Fw {
+
+	/**
+	 * 
+	 * @param {number} width 
+	 * @param {number} height 
+	 * @param {number} pixelSize 
+	 */
 	constructor(width, height, pixelSize) {
+		pixelSize = pixelSize || 1;
+
 		this.canvas = document.createElement("canvas");
 		this.canvas.width = width;
 		this.canvas.height = height;
@@ -188,6 +330,7 @@ class Fw {
 
 		this.renderer = new Renderer(this.context, width, height, pixelSize);
 		this.content = new ContentHandler();
+		this.entities = new EntityHandler();
 
 		this.lastTime = Date.now();
 		this.accum = 0;
@@ -212,6 +355,7 @@ class Fw {
 			that.mouseUp[e.button] = true;
 			that.mouseHold[e.button] = false;
 		};
+		this.canvas.focus();
 	}
 
 	isMouseDown(btn) {
@@ -226,23 +370,28 @@ class Fw {
 		return this.mouseDown[btn];
 	}
 
+	/**
+	 * 
+	 * @param {Game} adapter 
+	 */
 	run(adapter) {
-		if (adapter.onLoad) {
-			adapter.onLoad(this);
-		}
+		adapter.onLoad(this.content);
 
 		let that = this;
 		this.content.loadAll(function() {
-			if (adapter.onStart) {
-				adapter.onStart(that);
-			}
+			adapter.onStart(that);
 			that._mainloop(adapter);
 		});
 	}
 
+	/**
+	 * 
+	 * @param {Game} adapter 
+	 */
 	_mainloop(adapter) {
-		if (adapter.onUpdate) adapter.onUpdate(this, TIME_STEP);
-		if (adapter.onDraw) adapter.onDraw(this);
+		adapter.onUpdate(this, TIME_STEP);
+		this.entities.update(this, TIME_STEP);
+		adapter.onDraw(this);
 		for (let i = 0; i < this.mouseDown.length; i++) this.mouseDown[i] = false;
 		for (let i = 0; i < this.mouseUp.length; i++) this.mouseUp[i] = false;
 		window.requestAnimationFrame(this._mainloop.bind(this, adapter));
