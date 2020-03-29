@@ -19,8 +19,12 @@ class Ball extends Entity {
 		this.z = 0;
 		this.ball = null;
 		this.shadow = null;
+		this.splashSprite = null;
+
 		this.force = [0, 0, 0];
 		this.tag = "ball";
+		this.timer = new Timer(1.0 / 20.0);
+		this.splash = false;
 	}
 
 	/**
@@ -30,6 +34,7 @@ class Ball extends Entity {
 	onCreate(fw) {
 		this.ball = fw.content.assets["ball0"];
 		this.shadow = fw.content.assets["ball_shadow"];
+		this.splashSprite = fw.content.assets["splash"];
 	}
 
 	/**
@@ -38,10 +43,14 @@ class Ball extends Entity {
 	 */
 	onDraw(fw) {
 		let spos = Math.isometricToScreen(this.x, this.y, 0);
-		fw.renderer.tile(this.shadow, spos[0], spos[1], 0.5, 0.5, 0, 1, 1);
+		if (!this.splash) {
+			fw.renderer.tile(this.shadow, spos[0], spos[1], 0.5, 0.5, 0, 1, 1);
 
-		let pos = Math.isometricToScreen(this.x, this.y, this.z);
-		fw.renderer.tile(this.ball, pos[0], pos[1], 0.5, 0.5, 0, 1, 1);
+			let pos = Math.isometricToScreen(this.x, this.y, this.z);
+			fw.renderer.tile(this.ball, pos[0], pos[1], 0.5, 0.5, 0, 1, 1);
+		} else {
+			fw.renderer.tile(this.splashSprite, spos[0], spos[1], 0.5, 0.9, this.timer.frame % 10, 1, 10);
+		}
 	}
 
 	/**
@@ -49,18 +58,23 @@ class Ball extends Entity {
 	 * @param {Fw} fw 
 	 */
 	onUpdate(fw, dt) {
-		this.force[2] -= 120 * dt;
+		this.timer.tick(dt);
+
+		this.force[2] -= 200 * dt;
 		
 		this.x += this.force[0] * dt;
 		this.y += this.force[1] * dt;
 		this.z += this.force[2] * dt;
 
-		this.force[0] *= 0.97;
-		this.force[1] *= 0.97;
-
-		if (this.z <= 0.0) {
-			this.force[2] = 0.0;
+		if (this.z <= 0.0 && !this.splash) {
+			this.force = [0, 0, 0];
 			this.z = 0.0;
+			this.splash = true;
+			this.timer.frame = 0;
+		}
+
+		if (this.splash && this.timer.frame % 10 >= 9) {
+			this.dead = true;
 		}
 	}
 }
@@ -114,8 +128,12 @@ class BasePlayer extends Entity {
 			let angle = Math.atan2(dy, dx) + Math.PI * 2.0;
 			this.direction = ~~Math.floor((angle - Math.PI / 8.0) / (Math.PI / 4.0)) % 8;
 
-			this.state = PST_THROW;
-			this.timer.frame = 0;
+			if (this.state == PST_RUN_TOWARDS) {
+				this.state = PST_RUN_TOWARDS_THROW;
+			} else {
+				this.state = PST_THROW;
+				this.timer.frame = 0;
+			}
 			this.threw = true;
 		}
 
@@ -123,24 +141,13 @@ class BasePlayer extends Entity {
 			default: break;
 			case PST_THROW: {
 				if (this.timer.frame % 8 === 5 && this.threw) {
-					let b = new Ball();
-					b.x = this.x;
-					b.y = this.y;
-					b.z = 32;
-
-					let dx = pos[0] - this.x,
-						dy = pos[1] - this.y,
-						dz = 1.0;
-					let mag = Math.sqrt(dx * dx + dy * dy + dz * dz);
-					b.force[0] = (dx / mag) * 300.0;
-					b.force[1] = (dy / mag) * 300.0;
-					b.force[2] = (dz / mag) * 500.0;
-					fw.entities.add(b);
-					this.threw = false;
+					this.throwBall(fw, pos);
 				} else if (this.timer.frame % 8 >= 7) this.state = PST_IDLE;
 			} break;
 			case PST_RUN_TOWARDS_THROW: {
-				if (this.timer.frame % 8 >= 7) this.state = PST_RUN_TOWARDS;
+				if (this.timer.frame % 8 === 5 && this.threw) {
+					this.throwBall(fw, pos);
+				} else if (this.timer.frame % 8 >= 7) this.state = PST_RUN_TOWARDS;
 
 				this.x += this.vector[0] * 150.0 * dt;
 				this.y += this.vector[1] * 150.0 * dt;
@@ -190,6 +197,23 @@ class BasePlayer extends Entity {
 		ren.tile(this.sprite, pos[0], pos[1]-30, 0.5, 0.5, frame, 33, 8);
 	}
 
+	throwBall(fw, pos) {
+		let b = new Ball();
+		b.x = this.x;
+		b.y = this.y;
+		b.z = 32;
+
+		let dx = pos[0] - this.x,
+			dy = pos[1] - this.y,
+			dz = 1.0;
+		let mag = Math.sqrt(dx * dx + dy * dy + dz * dz);
+		b.force[0] = (dx / mag) * 300.0;
+		b.force[1] = (dy / mag) * 300.0;
+		b.force[2] = dz * 50.0;
+		fw.entities.add(b);
+		this.threw = false;
+	}
+
 	goto(x, y) {
 		this.target = [x, y];
 		
@@ -218,6 +242,7 @@ class BTBGame extends Game {
 		content.addImage("blocks", "blocks.png");
 		content.addImage("ball0", "ball0.png");
 		content.addImage("ball_shadow", "ball_shadow.png");
+		content.addImage("splash", "splash.png");
 	}
 
 	onStart(fw) {
