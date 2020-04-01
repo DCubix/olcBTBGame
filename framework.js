@@ -37,6 +37,39 @@ Math.remap = function(val, fmi, fma, tmi, tma) {
 	return tmi + ratio * (tma - tmi);
 };
 
+Math.rotationMatrix = function(angle) {
+	let s = Math.sin(angle), c = Math.cos(angle);
+	return [
+		c, -s,
+		s, c
+	];
+};
+
+Math.scalingMatrix = function(x, y) {
+	return [
+		x, 0.0,
+		0.0, y
+	];
+};
+
+Math.matrixMult = function(a, b) {
+	function dot(i, j) {
+		return i[0] * j[0] + i[1] * j[1];
+	}
+	return [
+		dot([a[0], a[1]], [b[0], b[2]]), dot([a[0], a[1]], [b[1], b[3]]),
+		dot([a[2], a[3]], [b[0], b[2]]), dot([a[2], a[3]], [b[1], b[3]])
+	];
+};
+
+Math.matrixInverse = function(m) {
+	let det = 1.0 / (m[0] * m[3] - m[1] * m[2]);
+	return [
+		det * m[3], det * -m[1],
+		det * -m[2], det * m[0]
+	];
+};
+
 class Renderer {
 	constructor(context, width, height, pixelSize) {
 		pixelSize = pixelSize || 1;
@@ -376,6 +409,67 @@ class Timer {
 	}
 }
 
+class Animator {
+	constructor() {
+		this.animations = {};
+		this.current = "";
+	}
+
+	add(name, frames) {
+		this.animations[name] = {
+			frames: frames,
+			loop: false,
+			speed: 1.0 / 15.0,
+			time: 0.0,
+			index: 0,
+			played: false
+		};
+		if (this.current.length === 0) {
+			this.current = name;
+		}
+	}
+
+	play(name, speed, loop) {
+		if (!this.animations[name]) return;
+
+		speed = speed || 1.0 / 15.0;
+		loop = loop || false;
+		this.animations[name].loop = loop;
+		this.animations[name].speed = speed;
+		if (!this.animations[name].played) {
+			this.animations[name].index = 0;
+			this.animations[name].time = 0;
+			this.animations[name].played = true;
+		}
+		if (this.current !== name) {
+			this.animations[this.current].played = false;
+		}
+		this.current = name;
+	}
+
+	get frame() {
+		return this.animations[this.current].frames[this.animations[this.current].index];
+	}
+
+	update(dt) {
+		let name = this.current;
+		this.animations[name].time += dt;
+
+		let max = this.animations[name].frames.length;
+		if (this.animations[name].time >= this.animations[name].speed) {
+			this.animations[name].time = 0.0;
+			if (this.animations[name].index++ >= max - 1) {
+				if (this.animations[name].loop) {
+					this.animations[name].index = 0;
+				} else {
+					this.animations[name].index = max - 1;
+				}
+			}
+		}
+	}
+
+}
+
 class Game {
 	/**
 	 * 
@@ -423,14 +517,20 @@ class Fw {
 		this.renderer = new Renderer(this.context, width, height, pixelSize);
 		this.content = new ContentHandler();
 		this.entities = new EntityHandler();
+		this.animators = [];
 
 		this.lastTime = Date.now();
 		this.accum = 0;
 
 		this.mouse = [0, 0];
+		
 		this.mouseDown = [0, 0, 0];
 		this.mouseUp = [0, 0, 0];
 		this.mouseHold = [0, 0, 0];
+
+		this.keyDown = [];
+		this.keyUp = [];
+		this.keyHold = [];
 
 		let that = this;
 		this.canvas.onmousemove = function(e) {
@@ -456,6 +556,17 @@ class Fw {
 			that.mouseUp[e.button] = true;
 			that.mouseHold[e.button] = false;
 		};
+
+		window.onkeydown = function(e) {
+			that.keyDown[e.keyCode] = true;
+			that.keyHold[e.keyCode] = true;
+		};
+
+		window.onkeyup = function(e) {
+			that.keyUp[e.keyCode] = true;
+			that.keyHold[e.keyCode] = false;
+		};
+
 		this.canvas.oncontextmenu = function() { return false; };
 		this.canvas.focus();
 	}
@@ -470,6 +581,24 @@ class Fw {
 
 	isMousePressed(btn) {
 		return this.mouseDown[btn];
+	}
+
+	isKeyDown(btn) {
+		return this.keyHold[btn] !== undefined && this.keyHold[btn];
+	}
+
+	isKeyUp(btn) {
+		return this.keyUp[btn] !== undefined && this.keyUp[btn];
+	}
+
+	isKeyPressed(btn) {
+		return this.keyDown[btn] !== undefined && this.keyDown[btn];
+	}
+
+	createAnimator() {
+		let ani = new Animator();
+		this.animators.push(ani);
+		return ani;
 	}
 
 	/**
@@ -494,8 +623,16 @@ class Fw {
 		adapter.onUpdate(this, TIME_STEP);
 		this.entities.update(this, TIME_STEP);
 		adapter.onDraw(this);
+
+		for (let ani of this.animators) {
+			ani.update(TIME_STEP);
+		}
+
 		for (let i = 0; i < this.mouseDown.length; i++) this.mouseDown[i] = false;
 		for (let i = 0; i < this.mouseUp.length; i++) this.mouseUp[i] = false;
+		for (let i in this.keyDown) this.keyDown[i] = false;
+		for (let i in this.keyUp) this.keyUp[i] = false;
+
 		window.requestAnimationFrame(this._mainloop.bind(this, adapter));
 	}
 }

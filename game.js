@@ -1,30 +1,32 @@
-let t = 0.0;
+const GM_MAT = Math.matrixMult(Math.scalingMatrix(1.0, 0.65), Math.rotationMatrix(Math.PI / 4));
+const GM_MAT_1 = Math.matrixInverse(GM_MAT);
 
-const PAO_STAND = 0;
-const PAO_DIE = 8;
-const PAO_RUN_THROW = 72;
-const PAO_STAND_THROW = 136;
-const PAO_RUN = 200;
+const PS_IDLE = 0;
+const PS_LEFT = 1;
+const PS_RIGHT = 2;
+const PS_JUMP = 3;
+const PS_LAND = 4;
 
-const PST_IDLE = 0;
-const PST_RUN_TOWARDS = 1;
-const PST_RUN_TOWARDS_THROW = 2;
-const PST_THROW = 3;
-const PST_DEAD = 4;
+function spaceToScreen(x, y, z) {
+	return [
+		GM_MAT[0] * x + GM_MAT[1] * y,
+		(GM_MAT[2] * x + GM_MAT[3] * y) - z
+	];
+}
 
+function screenToSpace(x, y) {
+	return [
+		GM_MAT_1[0] * x + GM_MAT_1[1] * y,
+		GM_MAT_1[2] * x + GM_MAT_1[3] * y
+	];
+}
 
-class Ball extends Entity {
+class Tree extends Entity {
 	constructor() {
 		super();
-		this.z = 0;
-		this.ball = null;
-		this.shadow = null;
-		this.splashSprite = null;
-
-		this.force = [0, 0, 0];
-		this.tag = "ball";
-		this.timer = new Timer(1.0 / 20.0);
-		this.splash = false;
+		this.sprite = null;
+		this.speed = 400.0;
+		this.tag = "tree";
 	}
 
 	/**
@@ -32,68 +34,38 @@ class Ball extends Entity {
 	 * @param {Fw} fw 
 	 */
 	onCreate(fw) {
-		this.ball = fw.content.assets["ball0"];
-		this.shadow = fw.content.assets["ball_shadow"];
-		this.splashSprite = fw.content.assets["splash"];
+		this.sprite = fw.content.assets["tree"];
 	}
 
-	/**
-	 * 
-	 * @param {Fw} fw 
-	 */
-	onDraw(fw) {
-		let spos = Math.isometricToScreen(this.x, this.y, 0);
-		if (!this.splash) {
-			fw.renderer.tile(this.shadow, spos[0], spos[1], 0.5, 0.5, 0, 1, 1);
-
-			let pos = Math.isometricToScreen(this.x, this.y, this.z);
-			fw.renderer.tile(this.ball, pos[0], pos[1], 0.5, 0.5, 0, 1, 1);
-		} else {
-			fw.renderer.tile(this.splashSprite, spos[0], spos[1], 0.5, 0.9, this.timer.frame % 10, 1, 10);
-		}
-	}
-
-	/**
-	 * 
-	 * @param {Fw} fw 
-	 */
 	onUpdate(fw, dt) {
-		this.timer.tick(dt);
+		this.x -= dt * this.speed;
+	}
 
-		this.force[2] -= 200 * dt;
-		
-		this.x += this.force[0] * dt;
-		this.y += this.force[1] * dt;
-		this.z += this.force[2] * dt;
-
-		if (this.z <= 0.0 && !this.splash) {
-			this.force = [0, 0, 0];
-			this.z = 0.0;
-			this.splash = true;
-			this.timer.frame = 0;
-		}
-
-		if (this.splash && this.timer.frame % 10 >= 9) {
-			this.dead = true;
-		}
+	onDraw(fw) {
+		let ren = fw.renderer;
+		let pos = spaceToScreen(this.x, this.y, 0);
+		ren.tile(this.sprite, pos[0], pos[1], 0.5, 0.87, 0, 1, 1);
 	}
 }
 
 class BasePlayer extends Entity {
 	constructor() {
 		super();
+		this.vz = 0.0;
+		this.z = 100;
 		
-		this.timer = new Timer(1.0 / 20.0);
-		this.sprite = null;
+		this.anim = null;
 		this.tag = "player";
 
-		this.direction = 0;
+		this.pstate = PS_IDLE;
 
-		this.target = [0, 0];
-		this.vector = [0, 0];
-		this.state = PST_IDLE;
+		this.sprite = null;
+		this.hat = null;
+		this.board = null;
+	}
 
-		this.threw = false;
+	set state(s) {
+		this.pstate = s;
 	}
 
 	/**
@@ -101,7 +73,16 @@ class BasePlayer extends Entity {
 	 * @param {Fw} fw 
 	 */
 	onCreate(fw) {
-		this.sprite = fw.content.assets["char"];
+		this.sprite = fw.content.assets["player"];
+		this.board = fw.content.assets["board0"];
+
+		this.anim = fw.createAnimator();
+		this.anim.add("stand", [0]);
+		this.anim.add("left", [1, 2, 3, 4]);
+		this.anim.add("right", [6, 7, 8, 9]);
+		this.anim.add("jump", [10, 11, 12, 13, 14]);
+		this.anim.add("land", [15, 16, 17, 18, 19]);
+		this.anim.add("die", [20, 21, 22, 23, 24, 25, 26]);
 	}
 
 	/**
@@ -110,71 +91,37 @@ class BasePlayer extends Entity {
 	 * @param {number} dt 
 	 */
 	onUpdate(fw, dt) {
-		this.timer.tick(dt);
-		
-		let pos = Math.isometricFromScreen(fw.mouse[0], fw.mouse[1]);
-		pos[0] = ~~Math.round(pos[0] / 32.0) * 32;
-		pos[1] = ~~Math.round(pos[1] / 32.0) * 32;
+		this.vz -= 500.0 * dt;
+		this.z += this.vz * dt;
 
-		let dx = this.vector[0];
-		let dy = this.vector[1];
-
-		if (fw.isMousePressed(0)) {
-			this.goto(pos[0], pos[1]);
-		} else if (fw.isMousePressed(2)) {
-			let dx = pos[0] - this.x,
-				dy = pos[1] - this.y;
-			
-			let angle = Math.atan2(dy, dx) + Math.PI * 2.0;
-			this.direction = ~~Math.floor((angle - Math.PI / 8.0) / (Math.PI / 4.0)) % 8;
-
-			if (this.state == PST_RUN_TOWARDS) {
-				this.state = PST_RUN_TOWARDS_THROW;
-			} else {
-				this.state = PST_THROW;
-				this.timer.frame = 0;
-			}
-			this.threw = true;
+		if (this.z >= 3) {
+			this.state = PS_JUMP;
 		}
 
-		switch (this.state) {
+		if (this.z < 3.0) {
+			this.vz += 500.0 * dt;
+			this.z = 0;
+			if (this.pstate === PS_JUMP)
+				this.state = PS_LAND;
+		}
+
+		switch (this.pstate) {
 			default: break;
-			case PST_THROW: {
-				if (this.timer.frame % 8 === 5 && this.threw) {
-					this.throwBall(fw, pos);
-				} else if (this.timer.frame % 8 >= 7) this.state = PST_IDLE;
-			} break;
-			case PST_RUN_TOWARDS_THROW: {
-				if (this.timer.frame % 8 === 5 && this.threw) {
-					this.throwBall(fw, pos);
-				} else if (this.timer.frame % 8 >= 7) this.state = PST_RUN_TOWARDS;
-
-				this.x += this.vector[0] * 150.0 * dt;
-				this.y += this.vector[1] * 150.0 * dt;
-
-				let angle = Math.atan2(dy, dx) + Math.PI * 2.0;
-				let dir = ~~Math.floor((angle - Math.PI / 8.0) / (Math.PI / 4.0)) % 8;
-				this.direction = dir;
-
-				let mag = Math.distance(this.target[0], this.target[1], this.x, this.y);
-				if (mag <= 2.0) {
-					this.state = PST_IDLE;
-				}
-			} break;
-			case PST_RUN_TOWARDS: {
-				this.x += this.vector[0] * 150.0 * dt;
-				this.y += this.vector[1] * 150.0 * dt;
-
-				let angle = Math.atan2(dy, dx) + Math.PI * 2.0;
-				let dir = ~~Math.floor((angle - Math.PI / 8.0) / (Math.PI / 4.0)) % 8;
-				this.direction = dir;
-
-				let mag = Math.distance(this.target[0], this.target[1], this.x, this.y);
-				if (mag <= 2.0) {
-					this.state = PST_IDLE;
+			case PS_IDLE: this.anim.play("stand", 0.01, true); break;
+			case PS_LEFT: this.anim.play("left", 1.0 / 20.0, false); break;
+			case PS_RIGHT: this.anim.play("right", 1.0 / 20.0, false); break;
+			case PS_JUMP: this.anim.play("jump", 1.0 / 20.0, false); break;
+			case PS_LAND: {
+				this.anim.play("land", 1.0 / 30.0, false);
+				if (this.anim.frame == 19) {
+					this.pstate = PS_IDLE;
 				}
 			} break;
 		}
+	}
+
+	jump() {
+		this.vz += 600.0;
 	}
 
 	/**
@@ -184,114 +131,109 @@ class BasePlayer extends Entity {
 	onDraw(fw) {
 		let ren = fw.renderer;
 
-		let fr = (this.timer.frame % 8);
-		let frame = PAO_STAND + this.direction;
-		switch (this.state) {
-			default: break;
-			case PST_RUN_TOWARDS_THROW: frame = PAO_RUN_THROW + (8 * this.direction) + fr; break;
-			case PST_RUN_TOWARDS: frame = PAO_RUN + (8 * this.direction) + fr; break;
-			case PST_THROW: frame = PAO_STAND_THROW + (8 * this.direction) + fr; break;
-		}
+		let pos = spaceToScreen(this.x, this.y, this.z);
+		let bpos = spaceToScreen(this.x + 5.0, this.y + 1, this.z + 28.0);
 
-		let pos = Math.isometricToScreen(this.x, this.y, 0);
-		ren.tile(this.sprite, pos[0], pos[1]-30, 0.5, 0.5, frame, 33, 8);
+		let frame = this.anim.frame;
+
+		ren.tile(this.board, pos[0], pos[1], 0.5, 0.5, frame, 1, 27);
+		ren.tile(this.sprite, bpos[0], bpos[1], 0.5, 0.5, frame, 1, 27);
 	}
 
-	throwBall(fw, pos) {
-		let b = new Ball();
-		b.x = this.x;
-		b.y = this.y;
-		b.z = 32;
-
-		let dx = pos[0] - this.x,
-			dy = pos[1] - this.y,
-			dz = 1.0;
-		let mag = Math.sqrt(dx * dx + dy * dy + dz * dz);
-		b.force[0] = (dx / mag) * 300.0;
-		b.force[1] = (dy / mag) * 300.0;
-		b.force[2] = dz * 50.0;
-		fw.entities.add(b);
-		this.threw = false;
-	}
-
-	goto(x, y) {
-		this.target = [x, y];
-		
-		let dx = x - this.x;
-		let dy = y - this.y;
-		let mag = Math.sqrt(dx * dx + dy * dy);
-		this.vector = [dx/mag, dy/mag];
-
-		if (this.state === PST_THROW) {
-			this.state = PST_RUN_TOWARDS_THROW;
-		} else {
-			this.state = PST_RUN_TOWARDS;
-		}
-		this.timer.frame = 0;
-	}
 }
 
 class BTBGame extends Game {
 	constructor() {
 		super();
 		this.player = new BasePlayer();
+		this.bg = 0;
+		this.treeTime = 0.0;
+
+		this.speed = 600.0;
 	}
 
 	onLoad(content) {
-		content.addImage("char", "character.png");
-		content.addImage("blocks", "blocks.png");
-		content.addImage("ball0", "ball0.png");
-		content.addImage("ball_shadow", "ball_shadow.png");
-		content.addImage("splash", "splash.png");
+		content.addImage("player", "player.png");
+		content.addImage("board0", "board0.png");
+		content.addImage("terrain", "terrain.png");
+		content.addImage("tree", "tree.png");
 	}
 
 	onStart(fw) {
 		fw.entities.add(this.player);
 	}
 
+	/**
+	 * 
+	 * @param {Fw} fw 
+	 * @param {number} dt 
+	 */
 	onUpdate(fw, dt) {
-		let s = 1.0;
-		if (fw.isMouseDown(0)) s = 10.0;
-		t += dt * s;
+		if (fw.isKeyPressed(32) && [PS_JUMP, PS_LAND].indexOf(this.player.pstate) === -1) {
+			this.player.jump();
+		}
+
+		if (this.player.pstate !== PS_JUMP) {
+			if (fw.isKeyDown(37)) { // LEFT
+				this.player.y += dt * 250.0;
+				this.player.state = PS_RIGHT;
+			} else if (fw.isKeyDown(39)) { // RIGHT
+				this.player.y -= dt * 250.0;
+				this.player.state = PS_LEFT;
+			} else {
+				this.player.state = PS_IDLE;
+			}
+		}
+
+		this.bg -= dt * this.speed;
+		if (this.bg <= -540) this.bg = 0;
+
+		this.treeTime += dt;
+		if (this.treeTime >= 0.1) {
+			this.treeTime = 0.0;
+
+			let tree0 = new Tree();
+			tree0.x = 1000.0;
+			tree0.y = 540.0 + (Math.random() * 2.0 - 1.0) * 200.0;
+			tree0.speed = this.speed;
+			fw.entities.add(tree0);
+			tree0.destroy(5.0);
+
+			let tree1 = new Tree();
+			tree1.x = 1000.0;
+			tree1.y = -540.0 + (Math.random() * 2.0 - 1.0) * 200.0;
+			tree1.speed = this.speed;
+			fw.entities.add(tree1);
+			tree1.destroy(5.0);
+		}
 	}
 
 	onDraw(fw) {
 		let content = fw.content.assets;
 		let ren = fw.renderer;
 
-		ren.camera = Math.isometricToScreen(this.player.x, this.player.y, 0);
+		//ren.camera = spaceToScreen(this.player.x, this.player.y, 0);
 
-		ren.clear();
+		ren.clear(255,255,255);
 
-		let mp = Math.isometricFromScreen(fw.mouse[0], fw.mouse[1]);
-		mp[0] = ~~Math.round(mp[0] / 32.0) * 32.0;
-		mp[1] = ~~Math.round(mp[1] / 32.0) * 32.0;
-		let mps = Math.isometricToScreen(mp[0], mp[1], 0.0);
-
-		for (let y = 0; y < 32; y++) {
-			for (let x = 0; x < 32; x++) {
-				let pos = Math.isometricToScreen(x * 32, y * 32, 0);
-
-				let mag = Math.distance(x * 32, y * 32, this.player.x, this.player.y);
-				let fade = 1.0 - Math.max(Math.min(mag / (5 * 32), 1.0), 0.0);
-				fade = Math.smoothstep(0.0, 0.8, fade);
-
-				let col = [fade, fade, fade];
-
-				ren.tile(content["blocks"], pos[0], pos[1]-32, 0.5, 0.5, 3, 16, 8, col);
-				ren.tile(content["blocks"], pos[0], pos[1], 0.5, 0.5, 11, 16, 8, col);
-			}
+		for (let i = -1; i < 2; i++) {
+			let o = i * 300.0;
+			let p0 = spaceToScreen(-540 + this.bg, -45 + o, 0);
+			let p1 = spaceToScreen(this.bg, -45 + o, 0);
+			let p2 = spaceToScreen( 540 + this.bg, -45 + o, 0);
+			let p3 = spaceToScreen( 540*2 + this.bg, -45 + o, 0);
+			ren.tile(content["terrain"], p0[0], p0[1], 0.5, 0.5, 0, 1, 1);
+			ren.tile(content["terrain"], p1[0], p1[1], 0.5, 0.5, 0, 1, 1);
+			ren.tile(content["terrain"], p2[0], p2[1], 0.5, 0.5, 0, 1, 1);
+			ren.tile(content["terrain"], p3[0], p3[1], 0.5, 0.5, 0, 1, 1);
 		}
 
-		ren.tile(content["blocks"], mps[0], mps[1], 0.5, 0.5, 10, 16, 8);
-		ren.flush();
-
 		fw.entities.render(fw, "player");
-		fw.entities.render(fw, "ball");
+		fw.entities.render(fw, "tree");
 		
-		ren.flush("y-");
+		ren.flush();
 	}
 }
 
-new Fw(800, 600).run(new BTBGame());
+new Fw(800, 600, 1.0).run(new BTBGame());
 
