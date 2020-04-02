@@ -70,6 +70,30 @@ Math.matrixInverse = function(m) {
 	];
 };
 
+Math.collides = function(r1, r2) {
+	let dx = (r1[0] + r1[2] / 2) - (r2[0] + r2[2] / 2);
+	let dy = (r1[1] + r1[3] / 2) - (r2[1] + r2[3] / 2);
+
+	let width = (r1[2] + r2[2]) / 2;
+	let height = (r1[3] + r2[3]) / 2;
+	let crossWidth = width * dy;
+	let crossHeight = height * dx;
+	let collision = 'none';
+
+	if (Math.abs(dx) <= width && Math.abs(dy) <= height) {
+		if (crossWidth > crossHeight) {
+			collision = (crossWidth > (-crossHeight)) ? 'bottom' : 'left';
+		} else {
+			collision = (crossWidth > -(crossHeight)) ? 'right' : 'top';
+		}
+	}
+	return collision;
+};
+
+Math.lerp = function(a, b, t) {
+	return (1.0 - t) * a + b * t;
+};
+
 class Renderer {
 	constructor(context, width, height, pixelSize) {
 		pixelSize = pixelSize || 1;
@@ -195,15 +219,32 @@ class Renderer {
 		this.raw(image, x, y, ox, oy, sx, sy, tw, th, color);
 	}
 
+	line(x1, y1, x2, y2, color) {
+		let cam = this.camera;
+		this.commands.push({
+			type: "line",
+			x1: x1 - cam[0],
+			x2: x2 - cam[0],
+			y1: y1 - cam[1],
+			y2: y2 - cam[1],
+			color: color,
+		});
+	}
+
+	lines(points, color) {
+		let prev = points[0];
+		for (let i = 1; i < points.length; i++) {
+			let p = points[i];
+			this.line(prev[0], prev[1], p[0], p[1], color);
+			prev = p;
+		}
+		this.line(prev[0], prev[1], points[0][0], points[0][1], color);
+	}
+
 	clear(r, g, b) {
 		r = r || 0;
 		g = g || 0;
 		b = b || 0;
-		// for (let y = 0; y < this.imageData.height; y++) {
-		// 	for (let x = 0; x < this.imageData.width; x++) {
-		// 		this.pixel(x, y, [r, g, b]);
-		// 	}
-		// }
 		this.backContext.fillStyle = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
 		this.backContext.fillRect(0, 0, this.imageData.width, this.imageData.height);
 	}
@@ -213,7 +254,7 @@ class Renderer {
 	 * @param {string} sorting 
 	 * @param {RenderingContext} context
 	 */
-	flush(sorting) {
+	flush(sorting, sortFunc) {
 		let context = this.backContext;
 
 		sorting = sorting || "none";
@@ -225,34 +266,55 @@ class Renderer {
 			this.commands.sort(function(a, b) { return a.ey > b.ey ? -1 : 1; });
 		} else if (sorting === "y-") {
 			this.commands.sort(function(a, b) { return a.ey < b.ey ? -1 : 1; });
+		} else if (sorting === "custom") {
+			this.commands.sort(sortFunc);
 		}
 
 		// Cull things out
 		let culledCommands = [];
 		for (let cmd of this.commands) {
-			let x = cmd.x,
-				y = cmd.y,
-				w = cmd.source[2],
-				h = cmd.source[3];
-			if (x + w >= 0 &&
-				x < this.width &&
-				y + h >= 0 &&
-				y < this.height
-			) {
-				culledCommands.push(cmd);
+			if (cmd.type === "image") {
+				let x = cmd.x,
+					y = cmd.y,
+					w = cmd.source[2],
+					h = cmd.source[3];
+				if (x + w >= 0 &&
+					x < this.width &&
+					y + h >= 0 &&
+					y < this.height
+				) {
+					culledCommands.push(cmd);
+				}
+			} else if (cmd.type === "line") {
+				if (cmd.x1 >= 0 &&
+					cmd.x2 < this.width &&
+					cmd.y1 >= 0 &&
+					cmd.y2 < this.height
+				) {
+					culledCommands.push(cmd);
+				}
 			}
 		}
 
 		context.save();
 		for (let cmd of culledCommands) {
-			context.globalAlpha = cmd.color[0];
-			
-			let x = cmd.x,
-				y = cmd.y;
-			//this.draw(cmd.image, ~~x, ~~y, cmd.source[2], cmd.source[3], cmd.source[0], cmd.source[1], cmd.source[2], cmd.source[3], cmd.color);
-			context.drawImage(cmd.image, cmd.source[0], cmd.source[1], cmd.source[2], cmd.source[3], ~~x, ~~y, cmd.source[2], cmd.source[3]);
+			if (cmd.type === "image") {
+				context.globalAlpha = cmd.color[0];
+				let x = cmd.x,
+					y = cmd.y;
+				context.drawImage(cmd.image, cmd.source[0], cmd.source[1], cmd.source[2], cmd.source[3], ~~x, ~~y, cmd.source[2], cmd.source[3]);
+			} else if (cmd.type === "line") {
+				let col = cmd.color;
+				context.lineWidth = 1;
+				context.strokeStyle = `rgba(${col[0] * 255}, ${col[1] * 255}, ${col[2] * 255}, ${col[3]})`;
+				context.beginPath();
+				context.moveTo(~~cmd.x1, ~~cmd.y1);
+				context.lineTo(~~cmd.x2, ~~cmd.y2);
+				context.stroke();
+			}
 		}
 		context.restore();
+		//console.log("RENDERED: " + culledCommands.length);
 
 		//this.backContext.putImageData(this.imageData, 0, 0);
 		this.context.drawImage(this.backCanvas, 0, 0, this.backCanvas.width * this.pixelSize, this.backCanvas.height * this.pixelSize);
@@ -374,6 +436,12 @@ class EntityHandler {
 		dead = dead.sort().reverse();
 		for (let d of dead) {
 			this.entities.splice(d, 1);
+		}
+	}
+
+	each(tag, cb) {
+		for (let ent of this.entities) {
+			if (ent.tag === tag) cb(ent);
 		}
 	}
 

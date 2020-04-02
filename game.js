@@ -25,7 +25,6 @@ class Tree extends Entity {
 	constructor() {
 		super();
 		this.sprite = null;
-		this.speed = 400.0;
 		this.tag = "tree";
 	}
 
@@ -38,7 +37,7 @@ class Tree extends Entity {
 	}
 
 	onUpdate(fw, dt) {
-		this.x -= dt * this.speed;
+		
 	}
 
 	onDraw(fw) {
@@ -48,24 +47,55 @@ class Tree extends Entity {
 	}
 }
 
+class Ramp extends Entity {
+	constructor() {
+		super();
+		this.sprite = null;
+		this.tag = "ramp";
+	}
+
+	onCreate(fw) {
+		this.sprite = fw.content.assets["ramp"];
+	}
+
+	onUpdate(fw, dt) {
+		
+	}
+
+	onDraw(fw) {
+		let ren = fw.renderer;
+		let pos = spaceToScreen(this.x, this.y, 0);
+		ren.tile(this.sprite, pos[0], pos[1], 0.5, 0.55, 0, 1, 1);
+
+		let rectCoords = [
+			[ this.x - 70, this.y - 28],
+			[ this.x + 70, this.y - 28],
+			[ this.x + 70, this.y + 28],
+			[ this.x - 70, this.y + 28]
+		];
+		let rectCoordsT = rectCoords.map(function(c) { return spaceToScreen(c[0], c[1], 0); });
+		ren.lines(rectCoordsT, [1.0, 0.0, 1.0, 1.0]);
+	}
+}
+
 class BasePlayer extends Entity {
 	constructor() {
 		super();
+		this.vx = 0.0;
 		this.vz = 0.0;
 		this.z = 100;
+
+		this.speed = 400.0;
 		
 		this.anim = null;
 		this.tag = "player";
 
-		this.pstate = PS_IDLE;
+		this.state = PS_IDLE;
 
 		this.sprite = null;
 		this.hat = null;
 		this.board = null;
-	}
-
-	set state(s) {
-		this.pstate = s;
+		this.boardShadow = null;
 	}
 
 	/**
@@ -75,6 +105,7 @@ class BasePlayer extends Entity {
 	onCreate(fw) {
 		this.sprite = fw.content.assets["player"];
 		this.board = fw.content.assets["board0"];
+		this.boardShadow = fw.content.assets["board_shadow"];
 
 		this.anim = fw.createAnimator();
 		this.anim.add("stand", [0]);
@@ -91,21 +122,53 @@ class BasePlayer extends Entity {
 	 * @param {number} dt 
 	 */
 	onUpdate(fw, dt) {
-		this.vz -= 500.0 * dt;
+		if (fw.isKeyPressed(32) && [PS_JUMP, PS_LAND].indexOf(this.state) === -1) {
+			this.jump();
+		}
+
+		if (this.state !== PS_JUMP) {
+			if (fw.isKeyDown(37)) { // LEFT
+				this.y += dt * 250.0;
+				this.state = PS_RIGHT;
+			} else if (fw.isKeyDown(39)) { // RIGHT
+				this.y -= dt * 250.0;
+				this.state = PS_LEFT;
+			} else {
+				this.state = PS_IDLE;
+			}
+		}
+
+		this.vx += this.speed * dt;
+		this.x += this.vx * dt;
+
+		this.vz -= 350.0 * dt;
 		this.z += this.vz * dt;
+
+		this.vx *= 0.99;
+		this.vz *= 0.99;
 
 		if (this.z >= 3) {
 			this.state = PS_JUMP;
 		}
 
 		if (this.z < 3.0) {
-			this.vz += 500.0 * dt;
+			this.vz += 400.0 * dt;
 			this.z = 0;
-			if (this.pstate === PS_JUMP)
+			if (this.state === PS_JUMP)
 				this.state = PS_LAND;
 		}
 
-		switch (this.pstate) {
+		let that = this;
+		fw.entities.each("ramp", function(e) {
+			let col = Math.collides([that.x - 24, that.y - 8, 48, 16], [e.x - 70, e.y - 32, 140, 64]);
+			if (col === "left" && that.z < 32.0) {
+				//let t = (that.x - (e.x - 22.5)) / 68.0;
+				that.z += 200.0 * dt;
+				that.vz += 900.0 * dt;
+			}
+		});
+
+		switch (this.state) {
 			default: break;
 			case PS_IDLE: this.anim.play("stand", 0.01, true); break;
 			case PS_LEFT: this.anim.play("left", 1.0 / 20.0, false); break;
@@ -114,14 +177,15 @@ class BasePlayer extends Entity {
 			case PS_LAND: {
 				this.anim.play("land", 1.0 / 30.0, false);
 				if (this.anim.frame == 19) {
-					this.pstate = PS_IDLE;
+					this.state = PS_IDLE;
 				}
 			} break;
 		}
 	}
 
-	jump() {
-		this.vz += 600.0;
+	jump(v) {
+		v = v || 500.0;
+		this.vz += v;
 	}
 
 	/**
@@ -133,11 +197,23 @@ class BasePlayer extends Entity {
 
 		let pos = spaceToScreen(this.x, this.y, this.z);
 		let bpos = spaceToScreen(this.x + 5.0, this.y + 1, this.z + 28.0);
+		let spos = spaceToScreen(this.x + 5.0, this.y + 1, 0.0);
 
 		let frame = this.anim.frame;
 
+		ren.tile(this.boardShadow, spos[0], spos[1], 0.5, 0.5, frame, 1, 27);
 		ren.tile(this.board, pos[0], pos[1], 0.5, 0.5, frame, 1, 27);
 		ren.tile(this.sprite, bpos[0], bpos[1], 0.5, 0.5, frame, 1, 27);
+
+		// let rectCoords = [
+		// 	[ this.x - 24, this.y - 8],
+		// 	[ this.x + 24, this.y - 8],
+		// 	[ this.x + 24, this.y + 8],
+		// 	[ this.x - 24, this.y + 8]
+		// ];
+		// let rectCoordsT = rectCoords.map(function(c) { return spaceToScreen(c[0], c[1], 0); });
+		// ren.lines(rectCoordsT, [1.0, 0.0, 0.0, 1.0]);
+		
 	}
 
 }
@@ -146,8 +222,11 @@ class BTBGame extends Game {
 	constructor() {
 		super();
 		this.player = new BasePlayer();
-		this.bg = 0;
 		this.treeTime = 0.0;
+
+		this.rampTime = 0.0;
+
+		this.bgOffset = 0;
 
 		this.speed = 600.0;
 	}
@@ -155,8 +234,10 @@ class BTBGame extends Game {
 	onLoad(content) {
 		content.addImage("player", "player.png");
 		content.addImage("board0", "board0.png");
+		content.addImage("board_shadow", "board_shadow.png");
 		content.addImage("terrain", "terrain.png");
 		content.addImage("tree", "tree.png");
+		content.addImage("ramp", "ramp.png");
 	}
 
 	onStart(fw) {
@@ -169,38 +250,30 @@ class BTBGame extends Game {
 	 * @param {number} dt 
 	 */
 	onUpdate(fw, dt) {
-		if (fw.isKeyPressed(32) && [PS_JUMP, PS_LAND].indexOf(this.player.pstate) === -1) {
-			this.player.jump();
-		}
-
-		if (this.player.pstate !== PS_JUMP) {
-			if (fw.isKeyDown(37)) { // LEFT
-				this.player.y += dt * 250.0;
-				this.player.state = PS_RIGHT;
-			} else if (fw.isKeyDown(39)) { // RIGHT
-				this.player.y -= dt * 250.0;
-				this.player.state = PS_LEFT;
-			} else {
-				this.player.state = PS_IDLE;
-			}
-		}
-
-		this.bg -= dt * this.speed;
-		if (this.bg <= -540) this.bg = 0;
-
 		this.treeTime += dt;
+		this.rampTime += dt;
+
+		if (this.rampTime >= 0.7) {
+			this.rampTime = 0;
+			let ramp = new Ramp();
+			ramp.x = 1000.0 + this.player.x;
+			ramp.y = (Math.random() * 2.0 - 1.0) * 200.0;
+			fw.entities.add(ramp);
+			ramp.destroy(5.0);
+		}
+
 		if (this.treeTime >= 0.1) {
 			this.treeTime = 0.0;
 
 			let tree0 = new Tree();
-			tree0.x = 1000.0;
+			tree0.x = 1000.0 + this.player.x;
 			tree0.y = 540.0 + (Math.random() * 2.0 - 1.0) * 200.0;
 			tree0.speed = this.speed;
 			fw.entities.add(tree0);
 			tree0.destroy(5.0);
 
 			let tree1 = new Tree();
-			tree1.x = 1000.0;
+			tree1.x = 1000.0 + this.player.x;
 			tree1.y = -540.0 + (Math.random() * 2.0 - 1.0) * 200.0;
 			tree1.speed = this.speed;
 			fw.entities.add(tree1);
@@ -212,22 +285,18 @@ class BTBGame extends Game {
 		let content = fw.content.assets;
 		let ren = fw.renderer;
 
-		//ren.camera = spaceToScreen(this.player.x, this.player.y, 0);
+		ren.camera = spaceToScreen(this.player.x, 0, 0);
+		let cam = ren.camera;
 
-		ren.clear(255,255,255);
+		ren.clear(0, 0, 0);
 
-		for (let i = -1; i < 2; i++) {
-			let o = i * 300.0;
-			let p0 = spaceToScreen(-540 + this.bg, -45 + o, 0);
-			let p1 = spaceToScreen(this.bg, -45 + o, 0);
-			let p2 = spaceToScreen( 540 + this.bg, -45 + o, 0);
-			let p3 = spaceToScreen( 540*2 + this.bg, -45 + o, 0);
-			ren.tile(content["terrain"], p0[0], p0[1], 0.5, 0.5, 0, 1, 1);
-			ren.tile(content["terrain"], p1[0], p1[1], 0.5, 0.5, 0, 1, 1);
-			ren.tile(content["terrain"], p2[0], p2[1], 0.5, 0.5, 0, 1, 1);
-			ren.tile(content["terrain"], p3[0], p3[1], 0.5, 0.5, 0, 1, 1);
+		for (let y = -1024; y < 99999.0; y += 512) {
+			for (let x = -1024; x < 99999.0; x += 512) {
+				ren.tile(content["terrain"], x, y, 0, 0, 0, 1, 1);
+			}
 		}
 
+		fw.entities.render(fw, "ramp");
 		fw.entities.render(fw, "player");
 		fw.entities.render(fw, "tree");
 		
